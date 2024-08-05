@@ -74,7 +74,7 @@ add_action('graphql_register_types', 'build_likes_table_register_types');
 function build_likes_table_register_types() {
     // Register a new type for the like and dislike count
     register_graphql_object_type('ItemLikeDislikeCount', [
-        'description' => __('Item ID, Like Count, and Dislike Count', 'heavenhold-text'),
+        'description' => __('Item ID, Like Count, Dislike Count, and Item Details', 'heavenhold-text'),
         'fields' => [
             'itemId' => [
                 'type' => 'Int',
@@ -94,7 +94,17 @@ function build_likes_table_register_types() {
             ],
             'userVote' => [
                 'type' => 'String',
-                'description' => __('The current user\'s vote status on the item: "like", "dislike", or "none"', 'heavenhold-text'),                
+                'description' => __('The current user\'s vote status on the item: "like", "dislike", or "none"', 'heavenhold-text'),
+            ],
+            'item' => [
+                'type' => 'Item',  // Assuming you have an Item GraphQL type
+                'description' => __('The item details', 'heavenhold-text'),
+                'resolve' => function($source, $args, $context, $info) {
+                    // Fetch the item as a WP_Post object
+                    $post = get_post($source['itemId']);
+                    // Ensure it's wrapped as a WPGraphQL Post object
+                    return !empty($post) ? new \WPGraphQL\Model\Post($post) : null;
+                }
             ]
         ]
     ]);
@@ -375,7 +385,6 @@ function build_likes_table_register_types() {
         }
     ]);
 
-
     // Downvote Mutation with Conditional Logic
     register_graphql_mutation('downvoteItem', [
         'inputFields' => [
@@ -522,7 +531,7 @@ function build_likes_table_register_types() {
         'fromType' => 'BuildLike',
         'toType' => 'User',
         'fromFieldName' => 'user',
-        'oneToOne' => false,
+        'oneToOne' => true, // Corrected to true
         'resolve' => function ($root, $args, $context, $info) {
             $resolver = new \WPGraphQL\Data\Connection\UserConnectionResolver($root, $args, $context, $info);
             $resolver->set_query_arg('include', $root->user_id);
@@ -538,6 +547,19 @@ function build_likes_table_register_types() {
             $resolver = new BuildLikesConnectionResolver($root, $args, $context, $info);
             $resolver->set_query_arg('user_id', $root->databaseId);
             return $resolver->get_connection();
+        }
+    ]);
+
+    // Register connection from BuildLike to Item using itemId
+    register_graphql_connection([
+        'fromType' => 'BuildLike',
+        'toType' => 'Item',
+        'fromFieldName' => 'item',
+        'oneToOne' => true, // Define as a one-to-one connection
+        'resolve' => function($root, $args, $context, $info) {
+            $resolver = new \WPGraphQL\Data\Connection\PostObjectConnectionResolver($root, $args, $context, $info);
+            $resolver->set_query_arg('include', $root->item_id);
+            return $resolver->one_to_one()->get_connection();
         }
     ]);
 }
