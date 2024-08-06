@@ -28,45 +28,13 @@ function create_build_likes_table() {
         ip_address VARCHAR(15) NOT NULL,
         up_or_down TINYINT NOT NULL,
         PRIMARY KEY (vote_id),
-        UNIQUE KEY unique_vote (hero_id, item_id, user_id, ip_address) 
+        UNIQUE KEY unique_vote_user (hero_id, item_id, user_id),
+        UNIQUE KEY unique_vote_ip (hero_id, item_id, ip_address)
     ) $charset_collate;";
 
     require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
     dbDelta($sql);
 }
-
-// Uncomment this section to insert sample data
-add_action('init', function() {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'build_likes';
-
-    // Sample data to be inserted
-    $likes = [
-        ['user_id' => 1, 'hero_id' => 5403, 'item_id' => 5911, 'ip_address' => '174.119.59.227', 'up_or_down' => 1],
-        ['user_id' => 1, 'hero_id' => 5403, 'item_id' => 8908, 'ip_address' => '174.119.59.227', 'up_or_down' => 0],
-    ];
-
-    // Inserting the data
-    foreach ($likes as $like) {
-        $wpdb->insert(
-            $table_name,
-            array(
-                'user_id' => $like['user_id'],
-                'hero_id' => $like['hero_id'],
-                'item_id' => $like['item_id'],
-                'ip_address' => $like['ip_address'],
-                'up_or_down' => $like['up_or_down']
-            ),
-            array(
-                '%d',
-                '%d',
-                '%d',
-                '%s',
-                '%d'
-            )
-        );
-    }
-});
 
 // Hook into WPGraphQL as it builds the Schema
 add_action('graphql_register_types', 'build_likes_table_register_types');
@@ -121,6 +89,7 @@ function build_likes_table_register_types() {
             'userId' => [
                 'type' => 'Int',
                 'description' => __('The ID of the user', 'heavenhold-text'),
+                'defaultValue' => null, // Default to null for anonymous users
             ],
             'ipAddress' => [
                 'type' => 'String',
@@ -141,7 +110,7 @@ function build_likes_table_register_types() {
                 "SELECT item_id,
                         SUM(CASE WHEN up_or_down = 1 THEN 1 ELSE 0 END) as like_count,
                         SUM(CASE WHEN up_or_down = 0 THEN 1 ELSE 0 END) as dislike_count,
-                        MAX(CASE WHEN (user_id = %d OR ip_address = %s) THEN up_or_down ELSE NULL END) as user_vote
+                        MAX(CASE WHEN (user_id = %d OR (user_id IS NULL AND ip_address = %s)) THEN up_or_down ELSE NULL END) as user_vote
                  FROM $table_name
                  WHERE hero_id = %d
                  GROUP BY item_id
@@ -182,6 +151,7 @@ function build_likes_table_register_types() {
             'userId' => [
                 'type' => 'Int',
                 'description' => __('The ID of the user', 'heavenhold-text'),
+                'defaultValue' => null, // Default to null for anonymous users
             ],
             'ipAddress' => [
                 'type' => 'String',
@@ -199,7 +169,7 @@ function build_likes_table_register_types() {
 
             $vote_status = $wpdb->get_var(
                 $wpdb->prepare(
-                    "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND item_id = %d AND (user_id = %d OR ip_address = %s)",
+                    "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND item_id = %d AND (user_id = %d OR (user_id IS NULL AND ip_address = %s))",
                     $hero_id,
                     $item_id,
                     $user_id,
@@ -256,30 +226,52 @@ function build_likes_table_register_types() {
             $ip_address = sanitize_text_field($input['ipAddress']);
             $up_or_down = 1;
 
+            // Determine if the user is logged in
+            $is_user_logged_in = $user_id !== null;
+
             // Check existing vote
-            $existing_vote = $wpdb->get_var(
-                $wpdb->prepare(
-                    "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND item_id = %d AND (user_id = %d OR ip_address = %s)",
-                    $hero_id,
-                    $item_id,
-                    $user_id,
-                    $ip_address
-                )
-            );
+            if ($is_user_logged_in) {
+                // Prioritize user_id
+                $existing_vote = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND item_id = %d AND user_id = %d",
+                        $hero_id,
+                        $item_id,
+                        $user_id
+                    )
+                );
+            } else {
+                // Use ip_address for anonymous users
+                $existing_vote = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND item_id = %d AND ip_address = %s",
+                        $hero_id,
+                        $item_id,
+                        $ip_address
+                    )
+                );
+            }
 
             if ($existing_vote !== null) {
                 // Update the existing vote
                 $wpdb->update(
                     $table_name,
                     ['up_or_down' => $up_or_down],
+                    $is_user_logged_in ?
                     [
                         'hero_id' => $hero_id,
                         'item_id' => $item_id,
-                        'user_id' => $user_id,
+                        'user_id' => $user_id
+                    ] :
+                    [
+                        'hero_id' => $hero_id,
+                        'item_id' => $item_id,
                         'ip_address' => $ip_address
                     ],
                     ['%d'],
-                    ['%d', '%d', '%d', '%s']
+                    $is_user_logged_in ?
+                    ['%d', '%d', '%d'] :
+                    ['%d', '%d', '%s']
                 );
             } else {
                 // Insert a new vote
@@ -341,30 +333,52 @@ function build_likes_table_register_types() {
             $ip_address = sanitize_text_field($input['ipAddress']);
             $up_or_down = 0;
 
+            // Determine if the user is logged in
+            $is_user_logged_in = $user_id !== null;
+
             // Check existing vote
-            $existing_vote = $wpdb->get_var(
-                $wpdb->prepare(
-                    "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND item_id = %d AND (user_id = %d OR ip_address = %s)",
-                    $hero_id,
-                    $item_id,
-                    $user_id,
-                    $ip_address
-                )
-            );
+            if ($is_user_logged_in) {
+                // Prioritize user_id
+                $existing_vote = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND item_id = %d AND user_id = %d",
+                        $hero_id,
+                        $item_id,
+                        $user_id
+                    )
+                );
+            } else {
+                // Use ip_address for anonymous users
+                $existing_vote = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND item_id = %d AND ip_address = %s",
+                        $hero_id,
+                        $item_id,
+                        $ip_address
+                    )
+                );
+            }
 
             if ($existing_vote !== null) {
                 // Update the existing vote
                 $wpdb->update(
                     $table_name,
                     ['up_or_down' => $up_or_down],
+                    $is_user_logged_in ?
                     [
                         'hero_id' => $hero_id,
                         'item_id' => $item_id,
-                        'user_id' => $user_id,
+                        'user_id' => $user_id
+                    ] :
+                    [
+                        'hero_id' => $hero_id,
+                        'item_id' => $item_id,
                         'ip_address' => $ip_address
                     ],
                     ['%d'],
-                    ['%d', '%d', '%d', '%s']
+                    $is_user_logged_in ?
+                    ['%d', '%d', '%d'] :
+                    ['%d', '%d', '%s']
                 );
             } else {
                 // Insert a new vote
@@ -385,86 +399,6 @@ function build_likes_table_register_types() {
         }
     ]);
 
-    // Downvote Mutation with Conditional Logic
-    register_graphql_mutation('downvoteItem', [
-        'inputFields' => [
-            'heroId' => [
-                'type' => 'Int',
-                'description' => __('The ID of the hero', 'heavenhold-text'),
-            ],
-            'itemId' => [
-                'type' => 'Int',
-                'description' => __('The ID of the item', 'heavenhold-text'),
-            ],
-            'ipAddress' => [
-                'type' => 'String',
-                'description' => __('The IP address of the voter', 'heavenhold-text'),
-            ],
-        ],
-        'outputFields' => [
-            'success' => [
-                'type' => 'Boolean',
-                'description' => __('True if the vote was successful', 'heavenhold-text'),
-            ],
-            'currentVote' => [
-                'type' => 'String',
-                'description' => __('The current vote status after the operation', 'heavenhold-text'),
-            ],
-        ],
-        'mutateAndGetPayload' => function($input, $context, $info) {
-            global $wpdb;
-            $table_name = $wpdb->prefix . 'build_likes';
-
-            // Prepare data for insertion
-            $hero_id = intval($input['heroId']);
-            $item_id = intval($input['itemId']);
-            $ip_address = sanitize_text_field($input['ipAddress']);
-            $user_id = get_current_user_id(); // Can be 0 for not logged in
-            $up_or_down = 0;
-
-            // Check existing vote
-            $existing_vote = $wpdb->get_var(
-                $wpdb->prepare(
-                    "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND item_id = %d AND (user_id = %d OR ip_address = %s)",
-                    $hero_id,
-                    $item_id,
-                    $user_id,
-                    $ip_address
-                )
-            );
-
-            if ($existing_vote !== null) {
-                // Update the existing vote
-                $wpdb->update(
-                    $table_name,
-                    ['up_or_down' => $up_or_down],
-                    [
-                        'hero_id' => $hero_id,
-                        'item_id' => $item_id,
-                        'user_id' => $user_id,
-                        'ip_address' => $ip_address
-                    ],
-                    ['%d'],
-                    ['%d', '%d', '%d', '%s']
-                );
-            } else {
-                // Insert a new vote
-                $wpdb->insert(
-                    $table_name,
-                    [
-                        'hero_id' => $hero_id,
-                        'item_id' => $item_id,
-                        'user_id' => $user_id,
-                        'ip_address' => $ip_address,
-                        'up_or_down' => $up_or_down
-                    ],
-                    ['%d', '%d', '%d', '%s', '%d']
-                );
-            }
-
-            return ['success' => true, 'currentVote' => 'dislike'];
-        }
-    ]);
 
     // Existing BuildLike type definition...
     register_graphql_object_type('BuildLike', [
