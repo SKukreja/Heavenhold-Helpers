@@ -405,13 +405,6 @@ function build_likes_table_register_types() {
         'description' => __('Likes per hero build item option', 'heavenhold-text'),
         'interfaces' => ['Node', 'DatabaseIdentifier'],
         'fields' => [
-            'id' => [
-                'type' => 'ID',
-                'description' => __('The unique vote ID', 'heavenhold-text'),
-                'resolve' => function ($source) {
-                    return base64_encode('buildLike:' . $source->vote_id);
-                }
-            ],
             'heroDatabaseId' => [
                 'type' => 'Int',
                 'description' => __('The hero id', 'heavenhold-text'),
