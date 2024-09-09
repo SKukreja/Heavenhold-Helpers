@@ -196,6 +196,10 @@ function team_votes_table_register_types() {
             ],
         ],
         'outputFields' => [
+            'teamId' => [
+                'type' => 'Int',
+                'description' => __('The ID of the team', 'heavenhold-text'),
+            ],
             'success' => [
                 'type' => 'Boolean',
                 'description' => __('True if the vote was successful', 'heavenhold-text'),
@@ -278,7 +282,7 @@ function team_votes_table_register_types() {
                 );
             }
 
-            return ['success' => true, 'currentVote' => 'vote'];
+            return ['teamId' => $team_id, 'success' => true, 'currentVote' => 'vote'];
         }
     ]);
 
@@ -303,6 +307,10 @@ function team_votes_table_register_types() {
             ],
         ],
         'outputFields' => [
+            'teamId' => [
+                'type' => 'Int',
+                'description' => __('The ID of the team', 'heavenhold-text'),
+            ],
             'success' => [
                 'type' => 'Boolean',
                 'description' => __('True if the vote was successful', 'heavenhold-text'),
@@ -385,7 +393,7 @@ function team_votes_table_register_types() {
                 );
             }
 
-            return ['success' => true, 'currentVote' => 'downvote'];
+            return ['teamId' => $team_id, 'success' => true, 'currentVote' => 'downvote'];
         }
     ]);
 
