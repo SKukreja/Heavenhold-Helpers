@@ -1,7 +1,4 @@
 <?php
-
-register_activation_hook(__FILE__, 'create_team_votes_table');
-
 function create_team_votes_table() {
     global $wpdb;
     $table_name = $wpdb->prefix . 'team_votes';
