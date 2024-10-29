@@ -65,14 +65,10 @@ function meta_votes_table_register_types() {
     ]);
 
     // Add a new field to the RootQuery for getting votes and downvotes by hero
-    register_graphql_field('RootQuery', 'metaVotesByHero', [
+    register_graphql_field('RootQuery', 'metaVotesByCategory', [
         'type' => ['list_of' => 'MetaVoteCount'],
         'description' => __('Get heros and their total vote and downvote counts for a specific category and user', 'heavenhold-text'),
         'args' => [
-            'heroId' => [
-                'type' => 'Int',
-                'description' => __('The ID of the hero', 'heavenhold-text'),
-            ],
             'categoryId' => [
                 'type' => 'Int',
                 'description' => __('The ID of the meta category', 'heavenhold-text'),                
@@ -92,7 +88,6 @@ function meta_votes_table_register_types() {
             global $wpdb;
             $table_name = $wpdb->prefix . 'meta_votes';
     
-            $hero_id = $args['heroId'];
             $category_id = $args['categoryId'];
             $user_id = $args['userId'];
             $ip_address = sanitize_text_field($args['ipAddress']);
@@ -104,13 +99,11 @@ function meta_votes_table_register_types() {
                         SUM(CASE WHEN up_or_down = 0 THEN 1 ELSE 0 END) as downvote_count,
                         MAX(CASE WHEN (user_id = %d OR (user_id IS NULL AND ip_address = %s)) THEN up_or_down ELSE NULL END) as user_vote
                  FROM $table_name
-                 WHERE hero_id = %d 
-                 AND category_id = %d
+                 WHERE category_id = %d
                  GROUP BY hero_id
                  ORDER BY upvote_count DESC",
                 $user_id,
                 $ip_address,
-                $hero_id,
                 $category_id
             );
     
