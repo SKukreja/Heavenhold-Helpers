@@ -97,7 +97,7 @@ function team_votes_table_register_types() {
                 "SELECT team_id,
                         SUM(CASE WHEN up_or_down = 1 THEN 1 ELSE 0 END) as upvote_count,
                         SUM(CASE WHEN up_or_down = 0 THEN 1 ELSE 0 END) as downvote_count,
-                        MAX(CASE WHEN (user_id = %d OR (user_id IS NULL AND ip_address = %s)) THEN up_or_down ELSE NULL END) as user_vote
+                        MAX(CASE WHEN (user_id = %d OR ip_address = %s) THEN up_or_down ELSE NULL END) as user_vote
                  FROM $table_name
                  WHERE hero_id = %d
                  GROUP BY team_id
