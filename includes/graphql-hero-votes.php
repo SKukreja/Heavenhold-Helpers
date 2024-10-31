@@ -64,6 +64,24 @@ function meta_votes_table_register_types() {
         ]
     ]);
 
+    register_graphql_object_type('MetaVoteTotals', [
+        'description' => __('Team ID, Vote Count, Downvote Count, and Team Details', 'heavenhold-text'),
+        'fields' => [
+            'heroId' => [
+                'type' => 'Int',
+                'description' => __('The hero ID', 'heavenhold-text'),
+            ],
+            'upvoteCount' => [
+                'type' => 'Int',
+                'description' => __('The total number of votes', 'heavenhold-text'),
+            ],
+            'downvoteCount' => [
+                'type' => 'Int',
+                'description' => __('The total number of downvotes', 'heavenhold-text'),
+            ],
+        ]
+    ]);
+
     // Add a new field to the RootQuery for getting votes and downvotes by hero
     register_graphql_field('RootQuery', 'metaVotesByCategory', [
         'type' => ['list_of' => 'MetaVoteCount'],
@@ -117,6 +135,37 @@ function meta_votes_table_register_types() {
                     'downvoteCount' => intval($row->downvote_count),
                     'userId' => $user_id,
                     'userVote' => is_null($row->user_vote) ? 'none' : ($row->user_vote == 1 ? 'upvote' : 'downvote'),
+                ];
+            }, $results);
+        }
+    ]);
+
+    // Add a new field to the RootQuery for getting votes and downvotes by hero
+    register_graphql_field('RootQuery', 'metaVotesTotals', [
+        'type' => ['list_of' => 'MetaVoteTotals'],
+        'description' => __('Get heroes and their total vote and downvote counts', 'heavenhold-text'),
+        'resolve' => function($root, $args, $context, $info) {
+            global $wpdb;
+            $table_name = $wpdb->prefix . 'meta_votes';
+    
+            // Query to get hero_ids and their vote and downvote counts for the specific hero and user
+            $query = $wpdb->prepare(
+                "SELECT hero_id,
+                        SUM(CASE WHEN up_or_down = 1 THEN 1 ELSE 0 END) as upvote_count,
+                        SUM(CASE WHEN up_or_down = 0 THEN 1 ELSE 0 END) as downvote_count
+                 FROM $table_name                 
+                 GROUP BY hero_id
+                 ORDER BY upvote_count DESC"
+            );
+    
+            // Execute the query and check the results
+            $results = $wpdb->get_results($query);
+    
+            return array_map(function($row) {
+                return [
+                    'heroId' => $row->hero_id,
+                    'upvoteCount' => intval($row->upvote_count),
+                    'downvoteCount' => intval($row->downvote_count),
                 ];
             }, $results);
         }
