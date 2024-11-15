@@ -8,15 +8,14 @@ function create_team_votes_table() {
     // Updated SQL with up_or_down column
     $sql = "CREATE TABLE $table_name (
         vote_id BIGINT NOT NULL AUTO_INCREMENT,
-        hero_id BIGINT NOT NULL,
         team_id BIGINT NOT NULL,
         user_id BIGINT,
         vote_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         ip_address VARCHAR(15) NOT NULL,
         up_or_down TINYINT NOT NULL,
         PRIMARY KEY (vote_id),
-        UNIQUE KEY unique_vote_user (hero_id, team_id, user_id),
-        UNIQUE KEY unique_vote_ip (hero_id, team_id, ip_address)
+        UNIQUE KEY unique_vote_user (team_id, user_id),
+        UNIQUE KEY unique_vote_ip (team_id, ip_address)
     ) $charset_collate;";
 
     require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
@@ -64,15 +63,42 @@ function team_votes_table_register_types() {
         ]
     ]);
 
-    // Add a new field to the RootQuery for getting votes and downvotes by hero
-    register_graphql_field('RootQuery', 'teamsVotesByHero', [
-        'type' => ['list_of' => 'TeamVoteCount'],
-        'description' => __('Get teams and their total vote and downvote counts for a specific hero and user', 'heavenhold-text'),
-        'args' => [
-            'heroId' => [
+    register_graphql_object_type('TeamVoteInfo', [
+        'description' => __('Team ID, Vote Count, Downvote Count', 'heavenhold-text'),
+        'fields' => [
+            'teamId' => [
                 'type' => 'Int',
-                'description' => __('The ID of the hero', 'heavenhold-text'),
+                'description' => __('The team ID', 'heavenhold-text'),
             ],
+            'upvoteCount' => [
+                'type' => 'Int',
+                'description' => __('The total number of votes', 'heavenhold-text'),
+            ],
+            'downvoteCount' => [
+                'type' => 'Int',
+                'description' => __('The total number of downvotes', 'heavenhold-text'),
+            ]
+        ]
+    ]);
+
+    register_graphql_object_type('TeamUserVote', [
+        'description' => __('Team ID, Vote Count, Downvote Count, and Team Details', 'heavenhold-text'),
+        'fields' => [
+            'teamId' => [
+                'type' => 'Int',
+                'description' => __('The team ID', 'heavenhold-text'),
+            ],
+            'userVote' => [
+                'type' => 'String',
+                'description' => __('The current user\'s vote status on the team: "upvote", "downvote", or "none"', 'heavenhold-text'),
+            ],
+        ]
+    ]);
+
+    register_graphql_field('RootQuery', 'getUserTeamVoteStatus', [
+        'type' => ['list_of' => 'TeamUserVote'],
+        'description' => __('Get the vote status of a user for a particular team', 'heavenhold-text'),
+        'args' => [
             'userId' => [
                 'type' => 'Int',
                 'description' => __('The ID of the user', 'heavenhold-text'),
@@ -87,8 +113,46 @@ function team_votes_table_register_types() {
         'resolve' => function($root, $args, $context, $info) {
             global $wpdb;
             $table_name = $wpdb->prefix . 'team_votes';
-    
-            $hero_id = $args['heroId'];
+            $user_id = $args['userId'];
+            $ip_address = sanitize_text_field($args['ipAddress']);
+
+            $query = $wpdb->prepare(
+                "SELECT team_id, up_or_down AS user_vote FROM $table_name WHERE (user_id = %d OR (ip_address = %s AND ip_address != '' AND ip_address IS NOT NULL))",
+                $user_id,
+                $ip_address,
+            );
+
+            // Execute the query and check the results
+            $results = $wpdb->get_results($query);
+
+            return array_map(function($row) {
+                return [
+                    'teamId' => $row->team_id,
+                    'userVote' => $row->user_vote == 1 ? 'upvote' : 'downvote',
+                ];
+            }, $results);
+        }
+    ]);
+
+    // Add a new field to the RootQuery for getting votes and downvotes by hero
+    register_graphql_field('RootQuery', 'teamsVotesWithUserVote', [
+        'type' => ['list_of' => 'TeamVoteCount'],
+        'description' => __('Get teams and their total vote and downvote counts for a specific user', 'heavenhold-text'),
+        'args' => [
+            'userId' => [
+                'type' => 'Int',
+                'description' => __('The ID of the user', 'heavenhold-text'),
+                'defaultValue' => null, // Default to null for anonymous users
+            ],
+            'ipAddress' => [
+                'type' => 'String',
+                'description' => __('The IP address of the user', 'heavenhold-text'),
+                'defaultValue' => $_SERVER['REMOTE_ADDR'],
+            ],
+        ],
+        'resolve' => function($root, $args, $context, $info) {
+            global $wpdb;
+            $table_name = $wpdb->prefix . 'team_votes';
             $user_id = $args['userId'];
             $ip_address = sanitize_text_field($args['ipAddress']);
     
@@ -99,18 +163,16 @@ function team_votes_table_register_types() {
                         SUM(CASE WHEN up_or_down = 0 THEN 1 ELSE 0 END) as downvote_count,
                         MAX(CASE WHEN (user_id = %d OR ip_address = %s) THEN up_or_down ELSE NULL END) as user_vote
                  FROM $table_name
-                 WHERE hero_id = %d
                  GROUP BY team_id
                  ORDER BY upvote_count DESC",
                 $user_id,
                 $ip_address,
-                $hero_id
             );
     
             // Execute the query and check the results
             $results = $wpdb->get_results($query);
     
-            return array_map(function($row) use ($hero_id, $user_id) {
+            return array_map(function($row) use ($user_id) {
                 return [
                     'teamId' => $row->team_id,
                     'upvoteCount' => intval($row->upvote_count),
@@ -122,15 +184,42 @@ function team_votes_table_register_types() {
         }
     ]);
 
+    // Add a new field to the RootQuery for getting votes and downvotes by hero
+    register_graphql_field('RootQuery', 'getTeamVotes', [
+        'type' => ['list_of' => 'TeamVoteInfo'],
+        'description' => __('Get teams and their total vote and downvote counts for a specific hero and user', 'heavenhold-text'),
+        'resolve' => function($root, $args, $context, $info) {
+            global $wpdb;
+            $table_name = $wpdb->prefix . 'team_votes';
+    
+            // Query to get team_ids and their vote and downvote counts for the specific hero and user
+            $query = $wpdb->prepare(
+                "SELECT team_id,
+                        SUM(CASE WHEN up_or_down = 1 THEN 1 ELSE 0 END) as upvote_count,
+                        SUM(CASE WHEN up_or_down = 0 THEN 1 ELSE 0 END) as downvote_count
+                 FROM $table_name
+                 GROUP BY team_id
+                 ORDER BY upvote_count DESC",
+            );
+    
+            // Execute the query and check the results
+            $results = $wpdb->get_results($query);
+    
+            return array_map(function($row) {
+                return [
+                    'teamId' => $row->team_id,
+                    'upvoteCount' => intval($row->upvote_count),
+                    'downvoteCount' => intval($row->downvote_count),
+                ];
+            }, $results);
+        }
+    ]);
+
     // GraphQL Query to Fetch User's Vote Status
     register_graphql_field('RootQuery', 'userVoteStatus', [
         'type' => 'String',
         'description' => __('Get the current user\'s vote status for a specific hero and team', 'heavenhold-text'),
         'args' => [
-            'heroId' => [
-                'type' => 'Int',
-                'description' => __('The ID of the hero', 'heavenhold-text'),
-            ],
             'teamId' => [
                 'type' => 'Int',
                 'description' => __('The ID of the team', 'heavenhold-text'),
@@ -151,13 +240,11 @@ function team_votes_table_register_types() {
 
             $user_id = intval($args['userId']);
             $ip_address = sanitize_text_field($args['ipAddress']);
-            $hero_id = intval($args['heroId']);
             $team_id = intval($args['teamId']);
 
             $vote_status = $wpdb->get_var(
                 $wpdb->prepare(
-                    "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND team_id = %d AND (user_id = %d OR (user_id IS NULL AND ip_address = %s))",
-                    $hero_id,
+                    "SELECT up_or_down FROM $table_name WHERE team_id = %d AND (user_id = %d OR (user_id IS NULL AND ip_address = %s))",
                     $team_id,
                     $user_id,
                     $ip_address
@@ -175,10 +262,6 @@ function team_votes_table_register_types() {
     // Upvote Mutation with Conditional Logic
     register_graphql_mutation('upvoteTeam', [
         'inputFields' => [
-            'heroId' => [
-                'type' => 'Int',
-                'description' => __('The ID of the hero', 'heavenhold-text'),
-            ],
             'teamId' => [
                 'type' => 'Int',
                 'description' => __('The ID of the team', 'heavenhold-text'),
@@ -209,9 +292,6 @@ function team_votes_table_register_types() {
         'mutateAndGetPayload' => function($input, $context, $info) {
             global $wpdb;
             $table_name = $wpdb->prefix . 'team_votes';
-
-            // Prepare data for insertion
-            $hero_id = intval($input['heroId']);
             $team_id = intval($input['teamId']);
             $user_id = intval($input['userId']);
             $ip_address = sanitize_text_field($input['ipAddress']);
@@ -225,8 +305,7 @@ function team_votes_table_register_types() {
                 // Prioritize user_id
                 $existing_vote = $wpdb->get_var(
                     $wpdb->prepare(
-                        "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND team_id = %d AND user_id = %d",
-                        $hero_id,
+                        "SELECT up_or_down FROM $table_name WHERE team_id = %d AND user_id = %d",
                         $team_id,
                         $user_id
                     )
@@ -235,8 +314,7 @@ function team_votes_table_register_types() {
                 // Use ip_address for anonymous users
                 $existing_vote = $wpdb->get_var(
                     $wpdb->prepare(
-                        "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND team_id = %d AND ip_address = %s",
-                        $hero_id,
+                        "SELECT up_or_down FROM $table_name WHERE team_id = %d AND ip_address = %s",
                         $team_id,
                         $ip_address
                     )
@@ -250,32 +328,29 @@ function team_votes_table_register_types() {
                     ['up_or_down' => $up_or_down],
                     $is_user_logged_in ?
                     [
-                        'hero_id' => $hero_id,
                         'team_id' => $team_id,
                         'user_id' => $user_id
                     ] :
                     [
-                        'hero_id' => $hero_id,
                         'team_id' => $team_id,
                         'ip_address' => $ip_address
                     ],
                     ['%d'],
                     $is_user_logged_in ?
-                    ['%d', '%d', '%d'] :
-                    ['%d', '%d', '%s']
+                    ['%d', '%d'] :
+                    ['%d', '%s']
                 );
             } else {
                 // Insert a new vote
                 $wpdb->insert(
                     $table_name,
                     [
-                        'hero_id' => $hero_id,
                         'team_id' => $team_id,
                         'user_id' => $user_id,
                         'ip_address' => $ip_address,
                         'up_or_down' => $up_or_down
                     ],
-                    ['%d', '%d', '%d', '%s', '%d']
+                    ['%d', '%d', '%s', '%d']
                 );
             }
 
@@ -286,10 +361,6 @@ function team_votes_table_register_types() {
     // Downvote Mutation with Conditional Logic
     register_graphql_mutation('downvoteTeam', [
         'inputFields' => [
-            'heroId' => [
-                'type' => 'Int',
-                'description' => __('The ID of the hero', 'heavenhold-text'),
-            ],
             'teamId' => [
                 'type' => 'Int',
                 'description' => __('The ID of the team', 'heavenhold-text'),
@@ -320,9 +391,6 @@ function team_votes_table_register_types() {
         'mutateAndGetPayload' => function($input, $context, $info) {
             global $wpdb;
             $table_name = $wpdb->prefix . 'team_votes';
-
-            // Prepare data for insertion
-            $hero_id = intval($input['heroId']);
             $team_id = intval($input['teamId']);
             $user_id = intval($input['userId']);
             $ip_address = sanitize_text_field($input['ipAddress']);
@@ -336,8 +404,7 @@ function team_votes_table_register_types() {
                 // Prioritize user_id
                 $existing_vote = $wpdb->get_var(
                     $wpdb->prepare(
-                        "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND team_id = %d AND user_id = %d",
-                        $hero_id,
+                        "SELECT up_or_down FROM $table_name WHERE team_id = %d AND user_id = %d",
                         $team_id,
                         $user_id
                     )
@@ -346,8 +413,7 @@ function team_votes_table_register_types() {
                 // Use ip_address for anonymous users
                 $existing_vote = $wpdb->get_var(
                     $wpdb->prepare(
-                        "SELECT up_or_down FROM $table_name WHERE hero_id = %d AND team_id = %d AND ip_address = %s",
-                        $hero_id,
+                        "SELECT up_or_down FROM $table_name WHERE team_id = %d AND ip_address = %s",
                         $team_id,
                         $ip_address
                     )
@@ -361,32 +427,29 @@ function team_votes_table_register_types() {
                     ['up_or_down' => $up_or_down],
                     $is_user_logged_in ?
                     [
-                        'hero_id' => $hero_id,
                         'team_id' => $team_id,
                         'user_id' => $user_id
                     ] :
                     [
-                        'hero_id' => $hero_id,
                         'team_id' => $team_id,
                         'ip_address' => $ip_address
                     ],
                     ['%d'],
                     $is_user_logged_in ?
-                    ['%d', '%d', '%d'] :
-                    ['%d', '%d', '%s']
+                    ['%d', '%d'] :
+                    ['%d', '%s']
                 );
             } else {
                 // Insert a new vote
                 $wpdb->insert(
                     $table_name,
                     [
-                        'hero_id' => $hero_id,
                         'team_id' => $team_id,
                         'user_id' => $user_id,
                         'ip_address' => $ip_address,
                         'up_or_down' => $up_or_down
                     ],
-                    ['%d', '%d', '%d', '%s', '%d']
+                    ['%d', '%d', '%s', '%d']
                 );
             }
 
@@ -400,13 +463,6 @@ function team_votes_table_register_types() {
         'description' => __('Votes per hero team team option', 'heavenhold-text'),
         'interfaces' => ['Node', 'DatabaseIdentifier'],
         'fields' => [
-            'heroDatabaseId' => [
-                'type' => 'Int',
-                'description' => __('The hero id', 'heavenhold-text'),
-                'resolve' => function ($source) {
-                    return $source->hero_id;
-                }
-            ],
             'teamDatabaseId' => [
                 'type' => 'Int',
                 'description' => __('The team id', 'heavenhold-text'),
